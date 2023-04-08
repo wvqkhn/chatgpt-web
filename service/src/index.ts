@@ -5,6 +5,7 @@ import { chatConfig, chatReplyProcess, currentModel } from './chatgpt'
 import { auth } from './middleware/auth'
 import { limiter } from './middleware/limiter'
 import { isNotEmptyString } from './utils/is'
+import { addMessage } from './utils/db'
 
 const app = express()
 const router = express.Router()
@@ -21,14 +22,15 @@ app.all('*', (_, res, next) => {
 
 router.post('/chat-process', [auth, limiter], async (req, res) => {
   res.setHeader('Content-type', 'application/octet-stream')
-
+  let lastChat = { id: '', parentMessageId: '', text: '' }
+  const { prompt, options = {}, systemMessage } = req.body as RequestProps
   try {
-    const { prompt, options = {}, systemMessage } = req.body as RequestProps
     let firstChunk = true
     await chatReplyProcess({
       message: prompt,
       lastContext: options,
       process: (chat: ChatMessage) => {
+        lastChat = chat
         res.write(firstChunk ? JSON.stringify(chat) : `\n${JSON.stringify(chat)}`)
         firstChunk = false
       },
@@ -40,6 +42,19 @@ router.post('/chat-process', [auth, limiter], async (req, res) => {
   }
   finally {
     res.end()
+    const message = {
+      messageId: lastChat.id,
+      conversationId: null,
+      parentMessageId: lastChat.parentMessageId,
+      send_message: prompt,
+      replay_message: lastChat.text,
+      create_time: new Date(),
+      update_time: new Date(),
+      status: 1,
+      create_user: req.headers['x-forwarded-for'],
+      update_user: req.connection.remoteAddress,
+    }
+    addMessage(message)
   }
 })
 
